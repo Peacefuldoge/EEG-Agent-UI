@@ -9,6 +9,7 @@ import os
 import shutil
 import uuid
 import threading
+import json
 from pathlib import Path
 import chainlit as cl
 from chainlit.input_widget import Select
@@ -52,7 +53,9 @@ def artifacts(report):
     for entry in report.get('trace',[]):
         result=entry.get('result',{})
         if isinstance(result,dict):
-            sources.extend(result.get(k) for k in ('report_html','summary_json'))
+            sources.extend(result.get(k) for k in ('report_html','summary_json',
+                'quality_comparison_html','quality_comparison_csv','quality_comparison_json',
+                'output_metadata_json','batch_metadata_json'))
     for item in sources:
         if not item:continue
         path=Path(item).resolve()
@@ -85,7 +88,10 @@ async def display_events(factory):
                 await step.update()
         elif kind=='tool_progress':
             progress=ev.get('data',{})
-            await cl.Message(content=f"⚙ {progress.get('tool')}: {progress.get('phase')}").send()
+            if progress.get('kind')=='batch_progress':
+                await cl.Message(content=f"Batch {progress.get('index')}/{progress.get('total')} · {progress.get('phase')} · {Path(progress.get('file','')).name}").send()
+            else:
+                await cl.Message(content=f"⚙ {progress.get('tool')}: {progress.get('phase')}").send()
         elif kind in ('run_finished','completed'):
             finished=ev.get('record',{'status':'completed','answer':ev.get('answer','')})
     if finished:
@@ -105,15 +111,27 @@ async def request_approval(thread_id,requests):
     response=await cl.AskActionMessage(
         content=f'### EEG operation requires approval\n{details}\n\nThread: `{thread_id}`',
         actions=[cl.Action(name='eeg_approve',payload={'approved':True},label='Approve'),
-                 cl.Action(name='eeg_reject',payload={'approved':False},label='Reject')],
+                 cl.Action(name='eeg_reject',payload={'approved':False},label='Reject'),
+                 cl.Action(name='eeg_edit',payload={'edit':True},label='Modify parameters')],
         timeout=600
     ).send()
     if response is None:
         await cl.Message(content=f'未做出决定；任务已保存。可稍后输入 `/resume {thread_id}` 重新审批。').send()
         return
-    approved=bool(response.get('payload',{}).get('approved',False))
+    payload=response.get('payload',{})
     s=cl.user_session.get('eeg_session')
-    await display_events(lambda:s.resume_run(thread_id,approved=approved))
+    if payload.get('edit'):
+        answer=await cl.AskUserMessage(content='请输入修改参数的 JSON 对象，例如 {"target_sfreq": 200}；修改后必须再次审批。',timeout=600).send()
+        if not answer:return
+        try:changes=json.loads(answer['output'])
+        except (ValueError,KeyError):
+            await cl.Message(content='无效 JSON；任务仍等待审批。').send();return
+        if not isinstance(changes,dict) or not changes:
+            await cl.Message(content='请输入非空的 JSON 参数对象。').send();return
+        await display_events(lambda:s.resume_run(thread_id,parameters=changes))
+    else:
+        approved=bool(payload.get('approved',False))
+        await display_events(lambda:s.resume_run(thread_id,approved=approved))
 
 
 @cl.on_chat_start
@@ -193,6 +211,11 @@ async def on_message(msg:cl.Message):
                 await request_approval(thread_id,run['pending'] or [])
             else:
                 await display_events(lambda:s.resume_run(thread_id))
+            return
+        if cmd=='/edit':
+            thread_id,sep,params=tail.strip().partition(' ')
+            if not sep:raise ValueError('Usage: /edit THREAD_ID {"target_sfreq":200}')
+            await display_events(lambda:s.resume_run(thread_id,parameters=json.loads(params)))
             return
         if cmd in ('/approve','/reject'):
             await display_events(lambda:s.resume_run(tail.strip(),approved=(cmd=='/approve')))

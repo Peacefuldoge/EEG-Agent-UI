@@ -42,7 +42,7 @@ def main(argv=None):
 
     mode=args.mode
     show(f'EEG-Agent UI | session={session.session_id} | strategy={session.strategy}')
-    show('Commands: /chat /agent /file PATH /strategy NAME /sessions /use ID /runs /history /resume ID /approve ID /reject ID /status /clear /exit')
+    show('Commands: /chat /agent /file PATH /strategy NAME /sessions /use ID /runs /history /resume ID /approve ID /reject ID /edit ID JSON /status /clear /exit')
 
     def render(events):
         record=None;streamed=False
@@ -54,7 +54,10 @@ def main(argv=None):
             elif kind=='node_started':show('\n  ▶ '+event['node'])
             elif kind=='node_completed':show('  ✓ '+event['node']+' ['+event.get('status','running')+']')
             elif kind=='tool_progress':
-                d=event.get('data',{});show('    '+str(d.get('tool'))+': '+str(d.get('phase')))
+                d=event.get('data',{})
+                if d.get('kind')=='batch_progress':
+                    show(f"    file {d.get('index')}/{d.get('total')}: {d.get('phase')} {d.get('file')}")
+                else:show('    '+str(d.get('tool'))+': '+str(d.get('phase')))
             elif kind=='approval_required':
                 for req in event['requests']:
                     show('\nAPPROVAL REQUIRED: '+str(req.get('tool'))+' '+str(req.get('arguments')))
@@ -97,6 +100,12 @@ def main(argv=None):
             if cmd=='/runs':
                 for r in session.list_runs():show(f"{r['thread_id']} | {r['status']} | {r['task'][:70]}")
                 continue
+            if cmd=='/edit':
+                import json
+                thread_id,sep,params=value.strip().partition(' ')
+                if not sep:show('Usage: /edit THREAD_ID {"target_sfreq": 200}');continue
+                edits=json.loads(params)
+                render(session.resume_run(thread_id,parameters=edits));continue
             if cmd in ('/approve','/reject','/resume'):
                 thread_id=value.strip()
                 if not thread_id:show('Provide thread ID');continue

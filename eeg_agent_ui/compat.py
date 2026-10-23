@@ -12,8 +12,8 @@ def check_core():
     except ImportError as exc:
         raise RuntimeError('Missing EEG-Agent Core: install eeg-agent-core[agent] first.') from exc
     major_minor = tuple(int(x) for x in core_version.split('.')[:2])
-    if major_minor != (0, 3) or tuple(int(x) for x in core_version.split('.')[:3]) < (0,3,2):
-        raise RuntimeError(f'EEG-Agent UI 0.3.x requires EEG-Agent Core >=0.3.2,<0.4; found {core_version}')
+    if major_minor != (0, 4):
+        raise RuntimeError(f'EEG-Agent UI 0.4.x requires EEG-Agent Core >=0.4.0,<0.5; found {core_version}')
     return EEGSession, STRATEGIES, SUPPORTED_RAW
 
 
