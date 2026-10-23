@@ -1,3 +1,7 @@
+## v0.3.2 additions
+
+See **[README_STREAMING.md](README_STREAMING.md)** for real-time Web/CLI usage, approval UI and restoring saved sessions.
+
 # EEG-Agent UI · v0.3.0
 
 A **separate, optional** frontend project for [EEG-Agent Core](../EEG-Agent-Core/README.md). It contains **both** a Chainlit Web UI and a terminal REPL with strategy/file commands. It does not copy EEG algorithms, LangGraph strategy graphs, or model weights. The core can be installed and used without this UI.

@@ -25,11 +25,13 @@ def test_terminal_ui_routes_to_core_session(monkeypatch, tmp_path, capsys):
     # Exercise UI CLI commands against fake public Core session API, not a second agent.
     events = []
     class FakeSession:
-        def __init__(self, *, data_root, output_root, model, base_url, strategy, checkpoint):
+        def __init__(self, *, data_root, output_root, model, base_url, strategy, checkpoint, session_id=None):
             self.strategy = strategy
             self.model_name = model
             self.base_url = base_url
             self.current_file = None
+            self.output_root = tmp_path
+            self.session_id = session_id or 'offline_mock'
             self.tools = type('Tools', (), {'output_root': tmp_path})()
         def set_strategy(self, x):
             self.strategy = x
@@ -38,13 +40,16 @@ def test_terminal_ui_routes_to_core_session(monkeypatch, tmp_path, capsys):
             self.current_file = path
             events.append(('file', path))
             return path
-        def chat(self, text):
+        def stream_chat(self, text):
             events.append(('chat', text))
-            return 'mock_chat'
-        def run_agent(self, text, on_node):
+            yield {'type':'token','text':'mock_chat'}
+            yield {'type':'completed','answer':'mock_chat'}
+        def stream_agent(self, text):
             events.append(('agent', text))
-            on_node('inspect_eeg', {'status': 'completed'})
-            return {'status': 'completed', 'answer': 'mock_agent', 'manifest': 'agent_run.json'}
+            yield {'type':'run_started','thread_id':'thread_mock'}
+            yield {'type':'node_started','node':'inspect_eeg'}
+            yield {'type':'node_completed','node':'inspect_eeg','status':'completed'}
+            yield {'type':'run_finished','record':{'status':'completed','answer':'mock_agent','manifest':'agent_run.json','thread_id':'thread_mock'}}
         def clear(self):
             events.append(('clear', None))
     monkeypatch.setattr(chat_cli, 'EEGSession', FakeSession)
@@ -58,5 +63,22 @@ def test_terminal_ui_routes_to_core_session(monkeypatch, tmp_path, capsys):
     assert ('strategy', 'rewoo') in events
     assert ('file', '/tmp/test.npz') in events
     assert ('agent', 'inspect EEG') in events
-    assert '→ inspect_eeg' in out
+    assert 'inspect_eeg' in out
     assert 'mock_agent' in out
+
+def test_batch_ui_reports_pending_approval(monkeypatch,tmp_path,capsys):
+    import pytest
+    from eeg_agent_ui import batch_cli
+    class DummySession:
+        def __init__(self,**kwargs):self.session_id='s1'
+        def set_strategy(self,value):pass
+        def set_file(self,value):pass
+        def stream_agent(self,text):
+            yield {'type':'run_finished','record':{'status':'awaiting_approval','thread_id':'t1',
+                    'answer':'','pending':[{'tool':'preprocess_eeg'}],'manifest':'manifest.json'}}
+    monkeypatch.setattr(batch_cli,'EEGSession',DummySession)
+    with pytest.raises(SystemExit) as e:
+        batch_cli.main(['--data-root',str(tmp_path), '--input',str(tmp_path/'file.edf'), '--task','test'])
+    assert e.value.code==2
+    output=capsys.readouterr().out
+    assert 'awaiting_approval' in output and '"thread_id": "t1"' in output
